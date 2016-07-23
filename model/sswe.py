@@ -1,4 +1,7 @@
 """SSWE trainer
+
+Train score specific word embeddings as described in Alikaniotis,
+Yannakoudakis and Rei (2016)
 """
 
 import cPickle as pkl
@@ -7,6 +10,8 @@ import numpy as np
 
 import theano
 import theano.tensor as T
+
+from sklearn.preprocessing import normalize
 
 
 FLOAT = 'float32'
@@ -126,6 +131,10 @@ class SSWEModel(Model):
 
         super(SSWEModel, self).__init__(kwargs)
 
+    @staticmethod
+    def normalize(embeddings):
+        return normalize(embeddings, norm='l2', axis=1)
+
     def _get_train_function(self):
         correct_inputs = T.matrix(dtype=FLOAT)
         noise_inputs = T.matrix(dtype=FLOAT)
@@ -133,26 +142,38 @@ class SSWEModel(Model):
 
         learning_rate = T.scalar(dtype=FLOAT)
 
+        # correct sequences
+        # embeddings -> hidden
         correct_prehidden = T.dot(correct_inputs, self.hidden_weights) + \
             self.hidden_biases
         hidden_c = self.activation(correct_prehidden)
+        # hidden -> output
         correct_score = T.dot(hidden_c, self.output_weights) + \
             self.output_biases
+
+        # corrupt sequences
+        # embeddings -> hidden
         noise_prehidden = T.dot(noise_inputs, self.hidden_weights) + \
             self.hidden_biases
         hidden_n = T.tanh(noise_prehidden)
+        # hidden -> output
         noise_score = T.dot(hidden_n, self.output_weights) + \
             self.output_biases
 
+        # hidden -> score output
         predicted_score = T.dot(hidden_c, self.output_weights_s) + \
             self.output_biases_s
-
+        # MSE
         predicted_loss = T.sum(T.sqr(predicted_score - y_score).mean(axis=-1))
 
+        # hinge loss for the context
         losses = T.sum(T.clip(1 - correct_score + noise_score, 0, 1e999))
+
+        # combined loss
         total_loss = self.alpha * losses + (1 - self.alpha) * \
             predicted_loss
 
+        # gradient descent
         gparams = T.grad(total_loss, self.params)
 
         dcorrect_inputs = T.grad(total_loss, correct_inputs)
